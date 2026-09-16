@@ -1836,6 +1836,7 @@ function initUnitMap(){
   unitMap = L.map('map', { attributionControl: true }).setView(DEFAULT_MAP_CENTER, DEFAULT_MAP_ZOOM);
   L.tileLayer(USGS_TILE_URL, {
     maxZoom: 19,
+    maxNativeZoom: 16,
     attribution: 'Imagery courtesy of USGS'
   }).addTo(unitMap);
 
