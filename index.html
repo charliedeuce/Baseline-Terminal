@@ -867,11 +867,6 @@
     <div class="toolbar">
       <select id="filter-type">
         <option value="">All types</option>
-        <option value="Police">Police</option>
-        <option value="Fire">Fire</option>
-        <option value="EMS">EMS</option>
-        <option value="Public Works/Other">Public Works/Other</option>
-        <option value="INTD">INTD</option>
       </select>
       <select id="filter-status">
         <option value="">All statuses</option>
@@ -881,6 +876,7 @@
         <option value="oos">Out of service</option>
       </select>
       <button class="primary" id="add-unit-btn">+ Add unit</button>
+      <button class="primary" id="add-ics-staff-btn">+ Add ICS staff</button>
       <button id="clear-all-btn">Clear all units</button>
     </div>
 
@@ -961,16 +957,11 @@
   <div id="modal">
     <h3 id="modal-title">Unit</h3>
     <input type="hidden" id="edit-id">
-    <label>Call sign</label>
+    <label id="f-callsign-label">Call sign</label>
     <input id="f-callsign" placeholder="e.g. P-12, E-4, M-1">
     <label>Type</label>
-    <select id="f-type">
-      <option>Police</option>
-      <option>Fire</option>
-      <option>EMS</option>
-      <option>Public Works/Other</option>
-      <option>INTD</option>
-    </select>
+    <select id="f-type"></select>
+    <input id="f-type-custom" placeholder="Type the exact title" style="display:none;margin-top:8px;">
     <label>Status</label>
     <select id="f-status">
       <option value="available">Available</option>
@@ -1113,13 +1104,33 @@ let shiftLogStart = savedShift.logStart || 0;
 let shiftNotableStart = savedShift.notableStart || 0;
 
 const statusLabel = {available:'Available', assigned:'Assigned', enroute:'En route', oos:'Out of service'};
+
+const REGULAR_TYPES = ['Police', 'Fire', 'EMS', 'Public Works/Other'];
+const ICS_STAFF_TYPES = [
+  'Incident Commander',
+  'Ops Section Chief',
+  'Planning Section Chief',
+  'Logistics Section Chief',
+  'Finance/Admin Section Chief',
+  'COML',
+  'INCM',
+  'INTD'
+];
+const CUSTOM_TYPE_VALUE = '__custom__';
+const GOLD = '#D4AF37';
+
 const typeColor = {
   'Police': '#58A6FF',
   'Fire': '#F85149',
   'EMS': '#F2F2F2',
-  'Public Works/Other': '#808000',
-  'INTD': '#D4AF37'
+  'Public Works/Other': '#808000'
 };
+ICS_STAFF_TYPES.forEach(t => { typeColor[t] = GOLD; });
+
+function getTypeColor(u){
+  if(u.icsStaffCustom) return GOLD;
+  return typeColor[u.type] || '';
+}
 
 function nowStr(){
   const d = new Date();
@@ -1207,6 +1218,17 @@ function renderStats(){
   document.getElementById('count-oos').textContent = counts.oos;
 }
 
+function populateFilterTypeDropdown(){
+  const sel = document.getElementById('filter-type');
+  const unitsGroup = REGULAR_TYPES.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
+  const icsGroup = ICS_STAFF_TYPES.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
+  sel.innerHTML = `
+    <option value="">All types</option>
+    <optgroup label="Units">${unitsGroup}</optgroup>
+    <optgroup label="ICS Staff">${icsGroup}</optgroup>
+  `;
+}
+
 function renderGrid(){
   const grid = document.getElementById('grid');
   const typeF = document.getElementById('filter-type').value;
@@ -1222,7 +1244,7 @@ function renderGrid(){
       <div class="unit-top">
         <div>
           <div class="callsign">${escapeHtml(u.callsign)}</div>
-          <span class="type-badge" style="${typeColor[u.type] ? `color:${typeColor[u.type]};border-color:${typeColor[u.type]};` : ''}">${u.type}</span>
+          <span class="type-badge" style="${getTypeColor(u) ? `color:${getTypeColor(u)};border-color:${getTypeColor(u)};` : ''}">${escapeHtml(u.type)}</span>
         </div>
         <div>
           <span class="badge status-${u.status}">${statusLabel[u.status]}</span>
@@ -1381,25 +1403,70 @@ function removeUnit(id){
   });
 }
 
-function openModal(id){
+function isIcsType(type){
+  return ICS_STAFF_TYPES.includes(type);
+}
+
+function buildTypeOptions(list, includeCustom){
+  let html = list.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
+  if(includeCustom) html += `<option value="${CUSTOM_TYPE_VALUE}">Other (write in)</option>`;
+  return html;
+}
+
+function updateCustomTypeVisibility(){
+  const sel = document.getElementById('f-type');
+  const customInput = document.getElementById('f-type-custom');
+  const label = document.getElementById('f-callsign-label');
+  const callsignInput = document.getElementById('f-callsign');
+  const isCustom = sel.value === CUSTOM_TYPE_VALUE;
+  customInput.style.display = isCustom ? 'block' : 'none';
+  if(isCustom || isIcsType(sel.value)){
+    label.textContent = 'Name';
+    callsignInput.placeholder = 'e.g. J. Smith';
+  } else {
+    label.textContent = 'Call sign';
+    callsignInput.placeholder = 'e.g. P-12, E-4, M-1';
+  }
+}
+
+function openModal(id, mode){
   const overlay = document.getElementById('overlay');
-  document.getElementById('modal-title').textContent = id ? 'Edit unit' : 'Add unit';
   document.getElementById('edit-id').value = id || '';
+  const typeSelect = document.getElementById('f-type');
+  const customInput = document.getElementById('f-type-custom');
+  customInput.value = '';
 
   if(id){
     const u = units.find(u => u.id === id);
+    document.getElementById('modal-title').textContent = 'Edit unit';
+    typeSelect.innerHTML = buildTypeOptions([...REGULAR_TYPES, ...ICS_STAFF_TYPES], true);
+    const knownType = REGULAR_TYPES.includes(u.type) || ICS_STAFF_TYPES.includes(u.type);
+    if(knownType){
+      typeSelect.value = u.type;
+    } else {
+      typeSelect.value = CUSTOM_TYPE_VALUE;
+      customInput.value = u.type;
+    }
     document.getElementById('f-callsign').value = u.callsign;
-    document.getElementById('f-type').value = u.type;
     document.getElementById('f-status').value = u.status;
     document.getElementById('f-location').value = u.location;
     document.getElementById('f-assignment').value = u.assignment;
   } else {
+    if(mode === 'ics'){
+      document.getElementById('modal-title').textContent = 'Add ICS Staff';
+      typeSelect.innerHTML = buildTypeOptions(ICS_STAFF_TYPES, true);
+      typeSelect.value = 'Incident Commander';
+    } else {
+      document.getElementById('modal-title').textContent = 'Add unit';
+      typeSelect.innerHTML = buildTypeOptions(REGULAR_TYPES, false);
+      typeSelect.value = 'Police';
+    }
     document.getElementById('f-callsign').value = '';
-    document.getElementById('f-type').value = 'Police';
     document.getElementById('f-status').value = 'available';
     document.getElementById('f-location').value = '';
     document.getElementById('f-assignment').value = '';
   }
+  updateCustomTypeVisibility();
   overlay.classList.add('show');
   document.getElementById('f-callsign').focus();
 }
@@ -1412,10 +1479,20 @@ function saveModal(){
   const id = document.getElementById('edit-id').value;
   const callsign = document.getElementById('f-callsign').value.trim();
   if(!callsign){
-    showAlert('Enter a call sign first.');
+    showAlert('Enter a name or call sign first.');
     return;
   }
-  const type = document.getElementById('f-type').value;
+  const typeSelectValue = document.getElementById('f-type').value;
+  let type = typeSelectValue;
+  let icsStaffCustom = false;
+  if(typeSelectValue === CUSTOM_TYPE_VALUE){
+    type = document.getElementById('f-type-custom').value.trim();
+    if(!type){
+      showAlert('Enter the custom title first.');
+      return;
+    }
+    icsStaffCustom = true;
+  }
   const status = document.getElementById('f-status').value;
   const location = document.getElementById('f-location').value.trim();
   const assignment = document.getElementById('f-assignment').value.trim();
@@ -1429,11 +1506,12 @@ function saveModal(){
     if(u.assignment !== assignment) changes.push(`assignment -> ${assignment || '—'}`);
     u.callsign = callsign; u.type = type; u.status = status;
     u.location = location; u.assignment = assignment; u.updated = ts;
+    u.icsStaffCustom = icsStaffCustom;
     addLog(`${callsign}: ${changes.length ? changes.join(', ') : 'details reviewed, no change'}.`);
   } else {
     units.push({
       id: 'u' + Date.now(),
-      callsign, type, status, location, assignment, updated: ts
+      callsign, type, status, location, assignment, updated: ts, icsStaffCustom
     });
     addLog(`${callsign} added to board (${statusLabel[status]}).`);
   }
@@ -1442,7 +1520,9 @@ function saveModal(){
   renderGrid();
 }
 
-document.getElementById('add-unit-btn').addEventListener('click', () => openModal(null));
+document.getElementById('add-unit-btn').addEventListener('click', () => openModal(null, 'unit'));
+document.getElementById('add-ics-staff-btn').addEventListener('click', () => openModal(null, 'ics'));
+document.getElementById('f-type').addEventListener('change', updateCustomTypeVisibility);
 document.getElementById('modal-cancel').addEventListener('click', closeModal);
 document.getElementById('modal-save').addEventListener('click', saveModal);
 document.getElementById('overlay').addEventListener('click', (e) => {
@@ -2671,6 +2751,7 @@ if('serviceWorker' in navigator){
 }
 
 initUnitMap();
+populateFilterTypeDropdown();
 renderGrid();
 renderLog();
 renderNotable();
